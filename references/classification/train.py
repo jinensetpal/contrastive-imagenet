@@ -16,6 +16,12 @@ from torchvision.transforms.functional import InterpolationMode
 from transforms import get_mixup_cutmix
 
 
+from src.data.imagenet import get_generators
+from src.model.loss import ContrastiveLoss
+from src.model.arch import Model
+from src import const
+
+
 def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args, model_ema=None, scaler=None):
     model.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -28,7 +34,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, arg
         image, target = image.to(device), target.to(device)
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             output = model(image)
-            loss = criterion(output, target)
+            loss = criterion(output, target) if criterion._get_name() != 'CrossEntropyLoss' else criterion(output[0], target[1])
 
         optimizer.zero_grad()
         if scaler is not None:
@@ -216,42 +222,45 @@ def main(args):
     else:
         torch.backends.cudnn.benchmark = True
 
-    train_dir = os.path.join(args.data_path, "train")
-    val_dir = os.path.join(args.data_path, "val")
-    dataset, dataset_test, train_sampler, test_sampler = load_data(train_dir, val_dir, args)
+    # train_dir = os.path.join(args.data_path, "train")
+    # val_dir = os.path.join(args.data_path, "val")
+    # dataset, dataset_test, train_sampler, test_sampler = load_data(train_dir, val_dir, args)
 
-    num_classes = len(dataset.classes)
-    mixup_cutmix = get_mixup_cutmix(
-        mixup_alpha=args.mixup_alpha, cutmix_alpha=args.cutmix_alpha, num_classes=num_classes, use_v2=args.use_v2
-    )
-    if mixup_cutmix is not None:
+    num_classes = const.N_CLASSES
+    # mixup_cutmix = get_mixup_cutmix(
+    #     mixup_alpha=args.mixup_alpha, cutmix_alpha=args.cutmix_alpha, num_classes=num_classes, use_v2=args.use_v2
+    # )
+    # if mixup_cutmix is not None:
 
-        def collate_fn(batch):
-            return mixup_cutmix(*default_collate(batch))
+    #     def collate_fn(batch):
+    #         return mixup_cutmix(*default_collate(batch))
 
-    else:
-        collate_fn = default_collate
+    # else:
+    #     collate_fn = default_collate
 
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        sampler=train_sampler,
-        num_workers=args.workers,
-        pin_memory=True,
-        collate_fn=collate_fn,
-    )
-    data_loader_test = torch.utils.data.DataLoader(
-        dataset_test, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True
-    )
+    # data_loader = torch.utils.data.DataLoader(
+    #     dataset,
+    #     batch_size=args.batch_size,
+    #     sampler=train_sampler,
+    #     num_workers=args.workers,
+    #     pin_memory=True,
+    #     collate_fn=collate_fn,
+    # )
+    # data_loader_test = torch.utils.data.DataLoader(
+    #     dataset_test, batch_size=args.batch_size, sampler=test_sampler, num_workers=args.workers, pin_memory=True
+    # )
+    data_loader, data_loader_test, _ = get_generators()
 
     print("Creating model")
-    model = torchvision.models.get_model(args.model, weights=args.weights, num_classes=num_classes)
+    # model = torchvision.models.get_model(args.model, weights=args.weights, num_classes=num_classes)
+    is_contrastive = hasattr(args, "contrastive") and args.contrastive
+    model = Model(const.IMAGE_SHAPE, is_contrastive=is_contrastive).to(const.DEVICE)
     model.to(device)
 
     if args.distributed and args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
-    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+    criterion = ContrastiveLoss(model.get_contrastive_cams, is_label_mask=True) if is_contrastive else nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
 
     custom_keys_weight_decay = []
     if args.bias_weight_decay is not None:
@@ -520,6 +529,7 @@ def get_args_parser(add_help=True):
     parser.add_argument("--weights", default=None, type=str, help="the weights enum name to load")
     parser.add_argument("--backend", default="PIL", type=str.lower, help="PIL or tensor - case insensitive")
     parser.add_argument("--use-v2", action="store_true", help="Use V2 transforms")
+    parser.add_argument("--contrastive", action="store_true")
     return parser
 
 

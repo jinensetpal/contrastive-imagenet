@@ -31,7 +31,7 @@ def train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, arg
     header = f"Epoch: [{epoch}]"
     for i, (image, target) in enumerate(metric_logger.log_every(data_loader, args.print_freq, header)):
         start_time = time.time()
-        image, target = image.to(device), target.to(device)
+        image, target = image.to(device), (target[0].to(device), target[1].to(device))
         with torch.cuda.amp.autocast(enabled=scaler is not None):
             output = model(image)
             loss = criterion(output, target) if criterion._get_name() != 'CrossEntropyLoss' else criterion(output[0], target[1])
@@ -372,8 +372,8 @@ def main(args):
     print("Start training")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
+        # if args.distributed:
+        #     train_sampler.set_epoch(epoch)
         train_one_epoch(model, criterion, optimizer, data_loader, device, epoch, args, model_ema, scaler)
         lr_scheduler.step()
         evaluate(model, criterion, data_loader_test, device=device)

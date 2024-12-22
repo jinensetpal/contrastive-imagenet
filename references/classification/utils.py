@@ -174,11 +174,11 @@ def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     with torch.inference_mode():
         maxk = max(topk)
-        batch_size = target.size(0)
-        if target.ndim == 2:
-            target = target.max(dim=1)[1]
+        batch_size = target[0].size(0)
+        if target[1].ndim == 2:
+            target = target[1].max(dim=1)[1]
 
-        _, pred = output.topk(maxk, 1, True, True)
+        _, pred = output[0].topk(maxk, 1, True, True)
         pred = pred.t()
         correct = pred.eq(target[None])
 
